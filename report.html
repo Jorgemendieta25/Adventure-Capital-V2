@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Adventure Capital HRSP Reports</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body { font-family: Arial, sans-serif; margin:0; padding:1rem; background:#f1f4f9; }
+    #form { background:#fff; padding:1rem; border-radius:8px; max-width:800px; margin:auto; box-shadow:0 4px 12px rgba(0,0,0,0.05); }
+    label { display:block; margin:0.5rem 0 0.2rem; }
+    input, select, button { width:100%; padding:0.5rem; margin-bottom:0.5rem; border:1px solid #ccc; border-radius:4px; }
+    .inline { display:flex; gap:1rem; flex-wrap:wrap; }
+    .inline > * { flex:1; min-width:120px; }
+    button { background:#5f72ff; color:#fff; border:none; cursor:pointer; font-size:1rem; }
+    #report { display:none; background:#fff; padding:1rem; margin:1rem auto; border-radius:8px; max-width:800px; box-shadow:0 4px 12px rgba(0,0,0,0.05); }
+    #report h1, #report h2 { margin:0.5rem 0; }
+    #report table { width:100%; border-collapse:collapse; margin-top:0.5rem; }
+    #report th, #report td { border:1px solid #aaa; padding:0.5rem; text-align:left; }
+    .total  { background:#eef4fb; font-weight:bold; }
+    .signature { display:flex; justify-content:space-between; margin-top:2rem; }
+    @media print {
+      body * { visibility:hidden; }
+      #report, #report * { visibility:visible; }
+      #report { position:absolute; top:0; left:0; width:100%; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="form">
+  <h1>Generate Monthly Report</h1>
+  <div class="inline">
+    <label>Report Type
+      <select id="reportType">
+        <option value="compensation">Compensation</option>
+        <option value="pnl">P&L Statement</option>
+      </select>
+    </label>
+    <label>Date
+      <input type="month" id="date">
+    </label>
+  </div>
+  <label>Submitter
+    <input type="text" id="submitter" value="Jorge Mendieta">
+  </label>
+  <label>Company
+    <input type="text" id="company" value="Adventure Capital HRSP">
+  </label>
+  <label>Park
+    <input type="text" id="park" value="Hillsborough River State Park">
+  </label>
+
+  <div id="compensationFields">
+    <h2>Sales Summary</h2>
+    <div class="inline">
+      <label>Gross Sales<input type="number" id="grossSales" step="0.01" value="0"></label>
+      <label>Net Sales<input type="number" id="netSales" step="0.01" value="0"></label>
+      <label>Taxes<input type="number" id="taxes" step="0.01" value="0"></label>
+    </div>
+  </div>
+
+  <div id="pnlFields" style="display:none;">
+    <h2>Revenue</h2>
+    <label>Gross Sales<input type="number" id="pnlGross" step="0.01" value="0"></label>
+    <h2>Expenses</h2>
+    <label>Food &amp; Beverage<input type="number" data-cat="COGS" value="0" step="0.01"></label>
+    <label>Staff (Payroll)<input type="number" data-cat="Payroll" value="0" step="0.01"></label>
+    <label>Rental/Overhead<input type="number" data-cat="Rental/Overhead" value="0" step="0.01"></label>
+    <label>Maintenance<input type="number" data-cat="Maintenance" value="0" step="0.01"></label>
+    <label>Other<input type="number" data-cat="Other" value="0" step="0.01"></label>
+    <label>Note<input type="text" id="note"></label>
+  </div>
+
+  <button onclick="generateReport()">Preview & Print</button>
+</div>
+
+<div id="report"></div>
+
+<script>
+  document.getElementById('reportType').addEventListener('change', function() {
+    var isComp = this.value === 'compensation';
+    document.getElementById('compensationFields').style.display = isComp ? '' : 'none';
+    document.getElementById('pnlFields').style.display  = isComp ? 'none' : '';
+  });
+
+  function generateReport() {
+    var type      = document.getElementById('reportType').value;
+    var date      = document.getElementById('date').value;
+    var submitter = document.getElementById('submitter').value;
+    var company   = document.getElementById('company').value;
+    var park      = document.getElementById('park').value;
+    var html = '<h1>' + (type==='compensation' ? 'Monthly Compensation Report' : 'Monthly P&L Statement') + '</h1>';
+    html += '<div>' + company + ' – ' + park + '</div>';
+    html += '<div>Date: ' + date + '</div>';
+    html += '<div>Prepared by: ' + submitter + '</div>';
+
+    if(type==='compensation') {
+      var gross = parseFloat(document.getElementById('grossSales').value)||0;
+      var net   = parseFloat(document.getElementById('netSales').value)||0;
+      var tax   = parseFloat(document.getElementById('taxes').value)||0;
+      html += '<h2>Sales Summary</h2><table>';
+      html += '<tr><td>Gross Sales</td><td>$' + gross.toFixed(2) + '</td></tr>';
+      html += '<tr><td>Net Sales</td><td>$'   + net.toFixed(2)   + '</td></tr>';
+      html += '<tr><td>Taxes</td><td>$'       + tax.toFixed(2)    + '</td></tr>';
+      html += '</table>';
+    } else {
+      var gross = parseFloat(document.getElementById('pnlGross').value)||0;
+      html += '<h2>Revenue</h2><table><tr><td>Gross Sales</td><td>$' + gross.toFixed(2) + '</td></tr></table>';
+      html += '<h2>Expenses</h2><table>';
+      var inputs = document.querySelectorAll('#pnlFields input[data-cat]');
+      var sums = { COGS:0, Payroll:0, 'Rental/Overhead':0, Maintenance:0, Other:0 };
+      inputs.forEach(function(i){
+        var cat = i.getAttribute('data-cat'), val = parseFloat(i.value)||0;
+        sums[cat] += val;
+      });
+      var total = 0;
+      for(var cat in sums) {
+        html += '<tr><td>' + cat + '</td><td>$' + sums[cat].toFixed(2) + '</td></tr>';
+        total += sums[cat];
+      }
+      var profit = gross - total;
+      html += '<tr class="total"><td>Total Expenses</td><td>$' + total.toFixed(2) + '</td></tr>';
+      html += '<tr class="total"><td>Profit/(Loss)</td><td>$' + profit.toFixed(2) + '</td></tr>';
+      html += '</table>';
+      var note = document.getElementById('note').value;
+      if(note) html += '<div class="callout">' + note + '</div>';
+    }
+
+    html += '<div class="signature"><div>' + submitter + '</div><div>__________________</div></div>';
+
+    var rpt = document.getElementById('report');
+    rpt.innerHTML = html;
+    rpt.style.display = 'block';
+    document.getElementById('form').style.display = 'none';
+    window.print();
+    document.getElementById('form').style.display = 'block';
+  }
+</script>
+
+</body>
+</html>
