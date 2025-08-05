@@ -1,245 +1,166 @@
-# app.py
-
-"""
-Adventure Capital HRSP Report Generator
-Single-file Flask app with inline templates.
-
-1) Install dependencies:
-   pip install Flask WeasyPrint
-
-2) Run:
-   python app.py
-
-3) Open your browser at http://localhost:8080
-"""
-
-from flask import Flask, request, redirect, url_for, send_file, render_template_string
-from io import BytesIO
-from weasyprint import HTML
-from datetime import datetime
-
-app = Flask(__name__)
-
-# --- Templates as Python strings ---
-
-index_template = """
 <!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>Monthly Report</title>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<style>
-body { font-family: system-ui,-apple-system,BlinkMacSystemFont,sans-serif; padding: 1rem; max-width: 800px; margin:auto; background:#f1f4f9; }
-label { display:block; margin:8px 0; }
-input, select { padding:6px; width:100%; max-width:400px; }
-button { padding:10px 16px; border:none; background:#5f72ff; color:white; border-radius:6px; cursor:pointer; }
-.card { background:#fff; padding:16px; border-radius:12px; box-shadow:0 10px 30px rgba(31,41,55,0.05); margin-bottom:16px; }
-</style>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Adventure Capital HRSP Reports</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body { font-family: system-ui, sans-serif; background:#f1f4f9; margin:0; padding:1rem; }
+    .card { background:#fff; padding:1rem; border-radius:8px; max-width:800px; margin:auto; box-shadow:0 4px 12px rgba(0,0,0,0.05); }
+    h1, h2, h3 { margin:0.5rem 0; }
+    label { display:block; margin:0.5rem 0 0.2rem; }
+    input, select, button { width:100%; padding:0.5rem; border:1px solid #ccc; border-radius:4px; box-sizing:border-box; }
+    .inline { display:flex; gap:1rem; flex-wrap:wrap; }
+    .inline > * { flex:1; min-width:120px; }
+    button { background:#5f72ff; color:#fff; border:none; cursor:pointer; margin-top:1rem; }
+    /* hidden PDF template */
+    #pdf-template { display:none; }
+    #pdf-content { background:#fff; padding:1rem; }
+    #pdf-content h1, #pdf-content h2 { margin-bottom:0.5rem; }
+    #pdf-content table { width:100%; border-collapse:collapse; margin-top:0.5rem; }
+    #pdf-content th, #pdf-content td { border:1px solid #aaa; padding:0.5rem; text-align:left; }
+    .total { background:#eef4fb; font-weight:bold; }
+    .callout { border-left:4px solid #5f72ff; background:#f7f9fc; padding:0.5rem; margin:0.5rem 0; }
+    .signature { display:flex; justify-content:space-between; margin-top:2rem; }
+  </style>
+  <!-- html2pdf.js bundle -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.2/html2pdf.bundle.min.js"></script>
 </head>
 <body>
+
   <div class="card">
     <h1>Generate Monthly Report</h1>
-    <form method="POST">
-      <label>Report Type:
-        <select name="report_type">
-          <option value="compensation">Monthly Compensation</option>
-          <option value="pnl">Monthly P&amp;L Statement</option>
+    <div class="inline">
+      <label>Type
+        <select id="reportType">
+          <option value="compensation">Compensation</option>
+          <option value="pnl">P&L Statement</option>
         </select>
       </label>
-      <label>Date: <input type="month" name="date" value="{{ default.date }}"></label>
-      <label>Submitter: <input type="text" name="submitter_name" value="{{ default.submitter }}"></label>
-      <label>Company: <input type="text" name="company" value="{{ default.company }}"></label>
-      <label>Park Location: <input type="text" name="park_location" value="{{ default.park }}"></label>
-      <button type="submit">Next</button>
-    </form>
-  </div>
-</body>
-</html>
-"""
+      <label>Date
+        <input type="month" id="reportDate" value="">
+      </label>
+    </div>
+    <label>Submitter
+      <input type="text" id="submitter" value="Jorge Mendieta">
+    </label>
+    <label>Company
+      <input type="text" id="company" value="Adventure Capital HRSP">
+    </label>
+    <label>Park
+      <input type="text" id="park" value="Hillsborough River State Park">
+    </label>
 
-entry_template = """
-<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>Data Entry</title>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<style>
-body { font-family: system-ui,-apple-system,BlinkMacSystemFont,sans-serif; padding:1rem; max-width:900px; margin:auto; }
-label { display:block; margin:6px 0; }
-input, select { padding:6px; width:100%; max-width:360px; }
-.section { background:#f7f9fc; padding:12px; border-radius:8px; margin-bottom:12px; }
-.inline { display:flex; gap:12px; flex-wrap:wrap; }
-button { padding:10px 16px; border:none; background:#5f72ff; color:white; border-radius:6px; cursor:pointer; }
-</style>
-</head>
-<body>
-  <h2>{{ data.report_type|capitalize }} Report for {{ data.date }}</h2>
-  <form method="POST" action="/generate">
-    <input type="hidden" name="report_type" value="{{ data.report_type }}">
-    <input type="hidden" name="date" value="{{ data.date }}">
-    <input type="hidden" name="submitter_name" value="{{ data.submitter_name }}">
-    <input type="hidden" name="company" value="{{ data.company }}">
-    <input type="hidden" name="park_location" value="{{ data.park_location }}">
-
-    {% if data.report_type == 'compensation' %}
-      <div class="section inline">
-        <label>Gross Sales: <input name="gross_sales" required type="number" step="0.01"></label>
-        <label>Net Sales:   <input name="net_sales"   required type="number" step="0.01"></label>
-        <label>Taxes:       <input name="taxes"       required type="number" step="0.01"></label>
+    <!-- Compensation inputs -->
+    <div id="compFields">
+      <h3>Sales Summary</h3>
+      <div class="inline">
+        <label>Gross Sales<input type="number" id="grossSales" step="0.01" value="0"></label>
+        <label>Net Sales  <input type="number" id="netSales"  step="0.01" value="0"></label>
+        <label>Taxes      <input type="number" id="taxes"     step="0.01" value="0"></label>
       </div>
-    {% else %}
-      <div class="section">
-        <label>Revenue (Gross Sales): <input name="gross_sales" required type="number" step="0.01"></label>
+    </div>
+
+    <!-- P&L inputs -->
+    <div id="pnlFields" style="display:none;">
+      <h3>Revenue</h3>
+      <label>Gross Sales<input type="number" id="pnlGross" step="0.01" value="0"></label>
+      <h3>Expenses</h3>
+      <div id="expenseInputs">
+        <div class="inline">
+          <label>Food &amp; Beverage<input type="number" data-cat="COGS" value="0" step="0.01"></label>
+          <label>Staff (Payroll)<input type="number" data-cat="Payroll" value="0" step="0.01"></label>
+        </div>
+        <div class="inline">
+          <label>Rental/Overhead<input type="number" data-cat="Rental/Overhead" value="0" step="0.01"></label>
+          <label>Maintenance<input type="number" data-cat="Maintenance" value="0" step="0.01"></label>
+        </div>
+        <div class="inline">
+          <label>Other<input type="number" data-cat="Other" value="0" step="0.01"></label>
+        </div>
       </div>
-      <div class="section">
-        <h3>Expenses</h3>
-        {% for cat in ['COGS','Payroll','Rental/Overhead','Maintenance','Other'] %}
-          <div class="inline">
-            <label>{{ cat }}: <input name="expense_{{cat}}" value="0" required type="number" step="0.01"></label>
-          </div>
-        {% endfor %}
-        <label>Note (e.g., tax-exempt info): <input name="note"></label>
-      </div>
-    {% endif %}
+      <label>Note (e.g. tax-exempt)<input type="text" id="pnlNote"></label>
+    </div>
 
-    <button type="submit">Generate PDF</button>
-  </form>
+    <button id="generateBtn">Generate PDF</button>
+  </div>
+
+  <!-- hidden area for PDF rendering -->
+  <div id="pdf-template">
+    <div id="pdf-content"></div>
+  </div>
+
+  <script>
+    // toggle fields based on type
+    document.getElementById('reportType').addEventListener('change', e => {
+      let isComp = e.target.value === 'compensation';
+      document.getElementById('compFields').style.display = isComp ? '' : 'none';
+      document.getElementById('pnlFields').style.display  = isComp ? 'none' : '';
+    });
+
+    document.getElementById('generateBtn').onclick = () => {
+      const type = document.getElementById('reportType').value;
+      const date = document.getElementById('reportDate').value;
+      const submitter = document.getElementById('submitter').value;
+      const company = document.getElementById('company').value;
+      const park = document.getElementById('park').value;
+
+      let html = '';
+      html += `<div><h1>${ type==='compensation'?'Monthly Compensation':'Monthly P&L Statement' }</h1>`;
+      html += `<div>${company} – ${park}</div>`;
+      html += `<div>Date: ${date}</div><div>By: ${submitter}</div></div>`;
+
+      if(type==='compensation') {
+        const gross = parseFloat(document.getElementById('grossSales').value)||0;
+        const net   = parseFloat(document.getElementById('netSales').value)||0;
+        const tax   = parseFloat(document.getElementById('taxes').value)||0;
+        html += `<h2>Sales Summary</h2>`;
+        html += `<table>
+          <tr><td>Gross Sales</td><td>$${gross.toFixed(2)}</td></tr>
+          <tr><td>Net Sales</td><td>$${net.toFixed(2)}</td></tr>
+          <tr><td>Taxes</td><td>$${tax.toFixed(2)}</td></tr>
+        </table>`;
+      } else {
+        const gross = parseFloat(document.getElementById('pnlGross').value)||0;
+        html += `<h2>Revenue</h2><table><tr><td>Gross Sales</td><td>$${gross.toFixed(2)}</td></tr></table>`;
+        // gather expenses
+        const inputs = document.querySelectorAll('#expenseInputs input');
+        let sums = { COGS:0, Payroll:0, 'Rental/Overhead':0, Maintenance:0, Other:0 };
+        inputs.forEach(i=>{
+          const cat = i.getAttribute('data-cat'),
+                v   = parseFloat(i.value)||0;
+          sums[cat] += v;
+        });
+        let total=0;
+        html += `<h2>Expenses</h2><table>`;
+        for(let cat in sums){
+          html += `<tr><td>${cat}</td><td>$${sums[cat].toFixed(2)}</td></tr>`;
+          total += sums[cat];
+        }
+        const profit = gross - total;
+        html += `<tr class="total"><td>Total Expenses</td><td>$${total.toFixed(2)}</td></tr>`;
+        html += `<tr class="total"><td>Profit/(Loss)</td><td>$${profit.toFixed(2)}</td></tr>`;
+        html += `</table>`;
+        const note = document.getElementById('pnlNote').value;
+        if(note) html += `<div class="callout">${note}</div>`;
+      }
+
+      html += `<div class="signature">
+        <div>Prepared by: ${submitter}</div>
+        <div>Signature: ____________________</div>
+      </div>`;
+
+      // render and download
+      const container = document.getElementById('pdf-content');
+      container.innerHTML = html;
+      html2pdf().from(container).set({
+        margin:       [10,10,10,10],
+        filename:     `${ type }-${date}.pdf`,
+        html2canvas:  { scale:2 },
+        jsPDF:        { unit:'mm', format:'a4' }
+      }).save();
+    };
+  </script>
 </body>
 </html>
-"""
 
-compensation_template = """
-<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>{{ report_type }}</title>
-<style>
-  body { font-family:Arial,sans-serif; padding:40px; color:#1f2230; }
-  .header { display:flex; justify-content:space-between; margin-bottom:20px; }
-  table  { width:100%; border-collapse:collapse; margin-top:8px; }
-  td, th { border:1px solid #ccc; padding:8px; }
-  .signature { margin-top:40px; display:flex; justify-content:space-between; }
-</style>
-</head>
-<body>
-  <div class="header">
-    <div><h1>{{ report_type }}</h1><div>{{ company }} – {{ park }}</div></div>
-    <div><div>Date: {{ date }}</div><div>By: {{ submitter }}</div></div>
-  </div>
-  <h2>Sales Summary</h2>
-  <table>
-    <tr><td>Gross Sales</td><td>${{ '%.2f'|format(gross) }}</td></tr>
-    <tr><td>Net Sales</td><td>${{ '%.2f'|format(net) }}</td></tr>
-    <tr><td>Taxes</td><td>${{ '%.2f'|format(taxes) }}</td></tr>
-  </table>
-  <div class="signature">
-    <div>Prepared by: {{ submitter }}</div>
-    <div>Signature: ____________________</div>
-  </div>
-</body>
-</html>
-"""
-
-pnl_template = """
-<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>{{ report_type }}</title>
-<style>
-  body { font-family:Arial,sans-serif; padding:40px; color:#1f2230; }
-  .header { display:flex; justify-content:space-between; margin-bottom:20px; }
-  table  { width:100%; border-collapse:collapse; margin-top:8px; }
-  td, th { border:1px solid #ccc; padding:8px; }
-  .total { font-weight:bold; background:#f0f4fb; }
-  .callout { margin:20px 0; padding:10px; border-left:4px solid #5f72ff; background:#f7f9fc; }
-  .signature { margin-top:40px; display:flex; justify-content:space-between; }
-</style>
-</head>
-<body>
-  <div class="header">
-    <div><h1>{{ report_type }}</h1><div>{{ company }} – {{ park }}</div></div>
-    <div><div>Date: {{ date }}</div><div>By: {{ submitter }}</div></div>
-  </div>
-  <h2>Revenue</h2>
-  <table><tr><td>Gross Sales</td><td>${{ '%.2f'|format(revenue) }}</td></tr></table>
-
-  <h2>Expenses</h2>
-  <table>
-    {% for cat, val in expenses.items() %}
-      <tr><td>{{ cat }}</td><td>${{ '%.2f'|format(val) }}</td></tr>
-    {% endfor %}
-    <tr class="total"><td>Total Expenses</td><td>${{ '%.2f'|format(total_expenses) }}</td></tr>
-    <tr class="total"><td>Profit/(Loss)</td><td>${{ '%.2f'|format(profit) }}</td></tr>
-  </table>
-
-  {% if note %}
-    <div class="callout">{{ note }}</div>
-  {% endif %}
-
-  <div class="signature">
-    <div>Prepared by: {{ submitter }}</div>
-    <div>Signature: ____________________</div>
-  </div>
-</body>
-</html>
-"""
-
-# --- Routes ---
-
-@app.route("/", methods=["GET", "POST"])
-def index():
-    default = {
-        "submitter": "Jorge Mendieta",
-        "company": "Adventure Capital HRSP",
-        "park": "Hillsborough River State Park",
-        "date": datetime.now().strftime("%Y-%m")
-    }
-    if request.method == "POST":
-        return redirect(url_for("entry", **request.form))
-    return render_template_string(index_template, default=default)
-
-@app.route("/entry", methods=["GET", "POST"])
-def entry():
-    data = request.values.to_dict()
-    return render_template_string(entry_template, data=data)
-
-@app.route("/generate", methods=["POST"])
-def generate():
-    data = request.form.to_dict()
-    rpt = data.get("report_type","pnl")
-    ctx = {
-        "date": data.get("date"),
-        "submitter": data.get("submitter_name"),
-        "company": data.get("company"),
-        "park": data.get("park_location"),
-    }
-
-    if rpt=="compensation":
-        ctx.update({
-            "report_type":"Monthly Compensation Report",
-            "gross": float(data.get("gross_sales",0)),
-            "net":   float(data.get("net_sales",0)),
-            "taxes": float(data.get("taxes",0)),
-        })
-        html = render_template_string(compensation_template, **ctx)
-        filename = f"Comp_{ctx['date']}.pdf"
-    else:
-        rev = float(data.get("gross_sales",0))
-        cats = ["COGS","Payroll","Rental/Overhead","Maintenance","Other"]
-        exp = {c: float(data.get(f"expense_{c}",0)) for c in cats}
-        total = sum(exp.values())
-        prof = rev - total
-        ctx.update({
-            "report_type":"Monthly P&L Statement",
-            "revenue": rev,
-            "expenses": exp,
-            "total_expenses": total,
-            "profit": prof,
-            "note": data.get("note","")
-        })
-        html = render_template_string(pnl_template, **ctx)
-        filename = f"PNL_{ctx['date']}.pdf"
-
-    pdf = BytesIO()
-    HTML(string=html).write_pdf(pdf)
-    pdf.seek(0)
-    return send_file(pdf, download_name=filename, mimetype="application/pdf")
-
-if __name__=="__main__":
-    app.run(host="0.0.0.0", port=8080)
