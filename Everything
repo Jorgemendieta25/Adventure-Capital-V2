@@ -1,0 +1,245 @@
+# app.py
+
+"""
+Adventure Capital HRSP Report Generator
+Single-file Flask app with inline templates.
+
+1) Install dependencies:
+   pip install Flask WeasyPrint
+
+2) Run:
+   python app.py
+
+3) Open your browser at http://localhost:8080
+"""
+
+from flask import Flask, request, redirect, url_for, send_file, render_template_string
+from io import BytesIO
+from weasyprint import HTML
+from datetime import datetime
+
+app = Flask(__name__)
+
+# --- Templates as Python strings ---
+
+index_template = """
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Monthly Report</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<style>
+body { font-family: system-ui,-apple-system,BlinkMacSystemFont,sans-serif; padding: 1rem; max-width: 800px; margin:auto; background:#f1f4f9; }
+label { display:block; margin:8px 0; }
+input, select { padding:6px; width:100%; max-width:400px; }
+button { padding:10px 16px; border:none; background:#5f72ff; color:white; border-radius:6px; cursor:pointer; }
+.card { background:#fff; padding:16px; border-radius:12px; box-shadow:0 10px 30px rgba(31,41,55,0.05); margin-bottom:16px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Generate Monthly Report</h1>
+    <form method="POST">
+      <label>Report Type:
+        <select name="report_type">
+          <option value="compensation">Monthly Compensation</option>
+          <option value="pnl">Monthly P&amp;L Statement</option>
+        </select>
+      </label>
+      <label>Date: <input type="month" name="date" value="{{ default.date }}"></label>
+      <label>Submitter: <input type="text" name="submitter_name" value="{{ default.submitter }}"></label>
+      <label>Company: <input type="text" name="company" value="{{ default.company }}"></label>
+      <label>Park Location: <input type="text" name="park_location" value="{{ default.park }}"></label>
+      <button type="submit">Next</button>
+    </form>
+  </div>
+</body>
+</html>
+"""
+
+entry_template = """
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Data Entry</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<style>
+body { font-family: system-ui,-apple-system,BlinkMacSystemFont,sans-serif; padding:1rem; max-width:900px; margin:auto; }
+label { display:block; margin:6px 0; }
+input, select { padding:6px; width:100%; max-width:360px; }
+.section { background:#f7f9fc; padding:12px; border-radius:8px; margin-bottom:12px; }
+.inline { display:flex; gap:12px; flex-wrap:wrap; }
+button { padding:10px 16px; border:none; background:#5f72ff; color:white; border-radius:6px; cursor:pointer; }
+</style>
+</head>
+<body>
+  <h2>{{ data.report_type|capitalize }} Report for {{ data.date }}</h2>
+  <form method="POST" action="/generate">
+    <input type="hidden" name="report_type" value="{{ data.report_type }}">
+    <input type="hidden" name="date" value="{{ data.date }}">
+    <input type="hidden" name="submitter_name" value="{{ data.submitter_name }}">
+    <input type="hidden" name="company" value="{{ data.company }}">
+    <input type="hidden" name="park_location" value="{{ data.park_location }}">
+
+    {% if data.report_type == 'compensation' %}
+      <div class="section inline">
+        <label>Gross Sales: <input name="gross_sales" required type="number" step="0.01"></label>
+        <label>Net Sales:   <input name="net_sales"   required type="number" step="0.01"></label>
+        <label>Taxes:       <input name="taxes"       required type="number" step="0.01"></label>
+      </div>
+    {% else %}
+      <div class="section">
+        <label>Revenue (Gross Sales): <input name="gross_sales" required type="number" step="0.01"></label>
+      </div>
+      <div class="section">
+        <h3>Expenses</h3>
+        {% for cat in ['COGS','Payroll','Rental/Overhead','Maintenance','Other'] %}
+          <div class="inline">
+            <label>{{ cat }}: <input name="expense_{{cat}}" value="0" required type="number" step="0.01"></label>
+          </div>
+        {% endfor %}
+        <label>Note (e.g., tax-exempt info): <input name="note"></label>
+      </div>
+    {% endif %}
+
+    <button type="submit">Generate PDF</button>
+  </form>
+</body>
+</html>
+"""
+
+compensation_template = """
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>{{ report_type }}</title>
+<style>
+  body { font-family:Arial,sans-serif; padding:40px; color:#1f2230; }
+  .header { display:flex; justify-content:space-between; margin-bottom:20px; }
+  table  { width:100%; border-collapse:collapse; margin-top:8px; }
+  td, th { border:1px solid #ccc; padding:8px; }
+  .signature { margin-top:40px; display:flex; justify-content:space-between; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div><h1>{{ report_type }}</h1><div>{{ company }} – {{ park }}</div></div>
+    <div><div>Date: {{ date }}</div><div>By: {{ submitter }}</div></div>
+  </div>
+  <h2>Sales Summary</h2>
+  <table>
+    <tr><td>Gross Sales</td><td>${{ '%.2f'|format(gross) }}</td></tr>
+    <tr><td>Net Sales</td><td>${{ '%.2f'|format(net) }}</td></tr>
+    <tr><td>Taxes</td><td>${{ '%.2f'|format(taxes) }}</td></tr>
+  </table>
+  <div class="signature">
+    <div>Prepared by: {{ submitter }}</div>
+    <div>Signature: ____________________</div>
+  </div>
+</body>
+</html>
+"""
+
+pnl_template = """
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>{{ report_type }}</title>
+<style>
+  body { font-family:Arial,sans-serif; padding:40px; color:#1f2230; }
+  .header { display:flex; justify-content:space-between; margin-bottom:20px; }
+  table  { width:100%; border-collapse:collapse; margin-top:8px; }
+  td, th { border:1px solid #ccc; padding:8px; }
+  .total { font-weight:bold; background:#f0f4fb; }
+  .callout { margin:20px 0; padding:10px; border-left:4px solid #5f72ff; background:#f7f9fc; }
+  .signature { margin-top:40px; display:flex; justify-content:space-between; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div><h1>{{ report_type }}</h1><div>{{ company }} – {{ park }}</div></div>
+    <div><div>Date: {{ date }}</div><div>By: {{ submitter }}</div></div>
+  </div>
+  <h2>Revenue</h2>
+  <table><tr><td>Gross Sales</td><td>${{ '%.2f'|format(revenue) }}</td></tr></table>
+
+  <h2>Expenses</h2>
+  <table>
+    {% for cat, val in expenses.items() %}
+      <tr><td>{{ cat }}</td><td>${{ '%.2f'|format(val) }}</td></tr>
+    {% endfor %}
+    <tr class="total"><td>Total Expenses</td><td>${{ '%.2f'|format(total_expenses) }}</td></tr>
+    <tr class="total"><td>Profit/(Loss)</td><td>${{ '%.2f'|format(profit) }}</td></tr>
+  </table>
+
+  {% if note %}
+    <div class="callout">{{ note }}</div>
+  {% endif %}
+
+  <div class="signature">
+    <div>Prepared by: {{ submitter }}</div>
+    <div>Signature: ____________________</div>
+  </div>
+</body>
+</html>
+"""
+
+# --- Routes ---
+
+@app.route("/", methods=["GET", "POST"])
+def index():
+    default = {
+        "submitter": "Jorge Mendieta",
+        "company": "Adventure Capital HRSP",
+        "park": "Hillsborough River State Park",
+        "date": datetime.now().strftime("%Y-%m")
+    }
+    if request.method == "POST":
+        return redirect(url_for("entry", **request.form))
+    return render_template_string(index_template, default=default)
+
+@app.route("/entry", methods=["GET", "POST"])
+def entry():
+    data = request.values.to_dict()
+    return render_template_string(entry_template, data=data)
+
+@app.route("/generate", methods=["POST"])
+def generate():
+    data = request.form.to_dict()
+    rpt = data.get("report_type","pnl")
+    ctx = {
+        "date": data.get("date"),
+        "submitter": data.get("submitter_name"),
+        "company": data.get("company"),
+        "park": data.get("park_location"),
+    }
+
+    if rpt=="compensation":
+        ctx.update({
+            "report_type":"Monthly Compensation Report",
+            "gross": float(data.get("gross_sales",0)),
+            "net":   float(data.get("net_sales",0)),
+            "taxes": float(data.get("taxes",0)),
+        })
+        html = render_template_string(compensation_template, **ctx)
+        filename = f"Comp_{ctx['date']}.pdf"
+    else:
+        rev = float(data.get("gross_sales",0))
+        cats = ["COGS","Payroll","Rental/Overhead","Maintenance","Other"]
+        exp = {c: float(data.get(f"expense_{c}",0)) for c in cats}
+        total = sum(exp.values())
+        prof = rev - total
+        ctx.update({
+            "report_type":"Monthly P&L Statement",
+            "revenue": rev,
+            "expenses": exp,
+            "total_expenses": total,
+            "profit": prof,
+            "note": data.get("note","")
+        })
+        html = render_template_string(pnl_template, **ctx)
+        filename = f"PNL_{ctx['date']}.pdf"
+
+    pdf = BytesIO()
+    HTML(string=html).write_pdf(pdf)
+    pdf.seek(0)
+    return send_file(pdf, download_name=filename, mimetype="application/pdf")
+
+if __name__=="__main__":
+    app.run(host="0.0.0.0", port=8080)
