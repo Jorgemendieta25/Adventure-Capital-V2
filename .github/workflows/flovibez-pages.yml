@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - 'self-service/**'
+      - 'river/**'
       - '.github/workflows/flovibez-pages.yml'
   workflow_dispatch:
 permissions:
