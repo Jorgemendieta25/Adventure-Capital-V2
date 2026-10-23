@@ -1,10 +1,11 @@
-name: Publish FloVibez Self-Service Website
+name: Publish Adventure Capital Website
 on:
   push:
     branches: [main]
     paths:
       - 'self-service/**'
       - 'river/**'
+      - 'index.html'
       - '.github/workflows/flovibez-pages.yml'
   workflow_dispatch:
 permissions:
