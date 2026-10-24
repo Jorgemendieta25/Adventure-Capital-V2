@@ -5,6 +5,8 @@ on:
     paths:
       - 'self-service/**'
       - 'river/**'
+      - 'waiver/**'
+      - 'rental/**'
       - 'index.html'
       - '.github/workflows/flovibez-pages.yml'
   workflow_dispatch:
